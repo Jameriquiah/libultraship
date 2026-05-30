@@ -1,7 +1,7 @@
 #if defined(__ANDROID__) || defined(__IOS__)
-#include "MobileImpl.h"
+#include "ship/port/mobile/MobileImpl.h"
 #include <SDL2/SDL.h>
-#include "ship/public/bridge/consolevariablebridge.h"
+#include "libultraship/bridge/consolevariablebridge.h"
 
 #include <imgui_internal.h>
 
@@ -110,7 +110,7 @@ extern "C" void JNICALL Java_com_dishii_mm_MainActivity_setButton(JNIEnv *env, j
     }
 }
 
-#include "Context.h"
+#include "ship/Context.h"
 
 extern "C" void JNICALL Java_com_dishii_mm_MainActivity_setAxis(JNIEnv *env, jobject jobj, jint axis, jshort value) {
     SDL_JoystickSetVirtualAxis(virtual_joystick, axis, value);

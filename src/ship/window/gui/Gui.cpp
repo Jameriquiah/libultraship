@@ -10,6 +10,7 @@
 #include "ship/config/Config.h"
 #include "ship/Context.h"
 #include "ship/config/ConsoleVariable.h"
+#include "libultraship/bridge/consolevariablebridge.h"
 #include "fast/resource/type/Texture.h"
 #include "ship/resource/File.h"
 #include <stb_image.h>
@@ -31,7 +32,7 @@
 #endif
 
 #if defined(__ANDROID__) || defined(__IOS__)
-#include "port/mobile/MobileImpl.h"
+#include "ship/port/mobile/MobileImpl.h"
 #endif
 
 #ifdef ENABLE_OPENGL
