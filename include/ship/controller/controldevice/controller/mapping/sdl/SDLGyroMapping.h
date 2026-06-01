@@ -15,7 +15,7 @@ class SDLGyroMapping final : public ControllerGyroMapping {
 
   private:
 #ifdef __ANDROID__
-    void GetAndroidGyroData(float gyroData[3]);
+    void GetAndroidGyroData(SDL_GameController* gamepad, float gyroData[3]);
 #endif
     float mNeutralPitch;
     float mNeutralYaw;
