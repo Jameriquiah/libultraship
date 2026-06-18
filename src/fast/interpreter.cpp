@@ -4236,7 +4236,7 @@ bool Interpreter::IsFrameReady() {
 }
 
 bool Interpreter::ViewportMatchesRendererResolution() {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
     // Always treat the viewport as not matching the render resolution on mac
     // to avoid issues with retina scaling.
     return false;
