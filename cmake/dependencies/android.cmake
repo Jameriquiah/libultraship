@@ -46,6 +46,10 @@ if (NOT ${spdlog_FOUND})
         OVERRIDE_FIND_PACKAGE
     )
     FetchContent_MakeAvailable(spdlog)
+
+    if(ANDROID)
+        target_compile_definitions(spdlog INTERFACE SPDLOG_FMT_EXTERNAL)
+    endif()
 endif()
 
 #=================== libzip ===================
