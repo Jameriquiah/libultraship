@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "ship/audio/WasapiAudioPlayer.h"
+#include "ship/utils/HResultException.h"
 #include <spdlog/spdlog.h>
 
 // These constants are currently missing from the MinGW headers.
@@ -19,7 +20,16 @@ namespace Ship {
 
 void WasapiAudioPlayer::ThrowIfFailed(HRESULT res) {
     if (FAILED(res)) {
-        throw res;
+        throw HResultException(res);
+    }
+}
+
+WasapiAudioPlayer::~WasapiAudioPlayer() {
+    DoClose();
+
+    if (mDeviceEnumerator) {
+        mDeviceEnumerator->UnregisterEndpointNotificationCallback(this);
+        mDeviceEnumerator.Reset();
     }
 }
 
@@ -28,31 +38,31 @@ bool WasapiAudioPlayer::SetupStream() {
         ThrowIfFailed(mDeviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &mDevice));
         ThrowIfFailed(mDevice->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr, IID_PPV_ARGS_Helper(&mClient)));
 
-        auto audioSurround = this->GetAudioChannels();
-        if (audioSurround == AudioChannelsSetting::audioStereo) {
-            mNumChannels = 2;
+        // Use GetNumOutputChannels() to determine stereo vs surround
+        mNumChannels = this->GetNumOutputChannels();
+
+        if (mNumChannels == 2) {
             WAVEFORMATEX desired;
             desired.wFormatTag = WAVE_FORMAT_PCM;
             desired.nChannels = mNumChannels; // Stereo audio
             desired.wBitsPerSample = 16;      // 16-bit audio
             desired.nSamplesPerSec = this->GetSampleRate();
             desired.nBlockAlign = desired.nChannels * desired.wBitsPerSample / 8;
-            desired.nAvgBytesPerSec = desired.nSamplesPerSec * desired.nBlockAlign; // 2 bytes per sample (16-bit audio)
+            desired.nAvgBytesPerSec = desired.nSamplesPerSec * desired.nBlockAlign;
             desired.cbSize = 0;
 
             ThrowIfFailed(mClient->Initialize(
                 AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                 2000000, 0, &desired, nullptr));
-        } else if (audioSurround == AudioChannelsSetting::audioSurround51) {
-            mNumChannels = 6;
+        } else if (mNumChannels == 6) {
+            // 5.1 surround (6 channels)
             WAVEFORMATEXTENSIBLE desired;
             desired.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
             desired.Format.nChannels = mNumChannels; // 6 channels for 5.1 audio
             desired.Format.wBitsPerSample = 16;      // 16-bit audio
             desired.Format.nSamplesPerSec = this->GetSampleRate();
             desired.Format.nBlockAlign = desired.Format.nChannels * desired.Format.wBitsPerSample / 8;
-            desired.Format.nAvgBytesPerSec =
-                desired.Format.nSamplesPerSec * desired.Format.nBlockAlign; // 2 bytes per sample (16-bit audio)
+            desired.Format.nAvgBytesPerSec = desired.Format.nSamplesPerSec * desired.Format.nBlockAlign;
             desired.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
             desired.dwChannelMask = KSAUDIO_SPEAKER_5POINT1;
             desired.Samples.wValidBitsPerSample = 16;
@@ -68,36 +78,60 @@ bool WasapiAudioPlayer::SetupStream() {
 
         mStarted = false;
         mInitialized = true;
-    } catch (HRESULT res) { return false; }
+    } catch (const HResultException& e) {
+        SPDLOG_ERROR("WasapiAudioPlayer::SetupStream failed: {}", e.what());
+        return false;
+    }
 
     return true;
 }
 
 bool WasapiAudioPlayer::DoInit() {
     try {
-        ThrowIfFailed(
-            CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&mDeviceEnumerator)));
-    } catch (HRESULT res) { return false; }
-
-    ThrowIfFailed(mDeviceEnumerator->RegisterEndpointNotificationCallback(this));
+        if (!mDeviceEnumerator) {
+            ThrowIfFailed(
+                CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&mDeviceEnumerator)));
+            ThrowIfFailed(mDeviceEnumerator->RegisterEndpointNotificationCallback(this));
+        }
+    } catch (const HResultException& e) {
+        SPDLOG_ERROR("WasapiAudioPlayer::DoInit failed: {}", e.what());
+        return false;
+    }
 
     return true;
 }
 
+void WasapiAudioPlayer::DoClose() {
+    std::lock_guard<std::mutex> lock(mMutex);
+    if (mClient) {
+        mClient->Stop();
+    }
+    mRenderClient.Reset();
+    mClient.Reset();
+    mDevice.Reset();
+    mInitialized = false;
+    mStarted = false;
+}
+
 int WasapiAudioPlayer::Buffered() {
+    std::lock_guard<std::mutex> lock(mMutex);
     if (!mInitialized) {
         if (!SetupStream()) {
-            return 0;
+            return GetDesiredBuffered();
         }
     }
     try {
         UINT32 padding;
         ThrowIfFailed(mClient->GetCurrentPadding(&padding));
         return padding;
-    } catch (HRESULT res) { return 0; }
+    } catch (const HResultException& e) {
+        SPDLOG_ERROR("WasapiAudioPlayer::Buffered failed: {}", e.what());
+        return GetDesiredBuffered();
+    }
 }
 
-void WasapiAudioPlayer::Play(const uint8_t* buf, size_t len) {
+void WasapiAudioPlayer::DoPlay(const uint8_t* buf, size_t len) {
+    std::lock_guard<std::mutex> lock(mMutex);
     if (!mInitialized) {
         if (!SetupStream()) {
             return;
@@ -125,7 +159,7 @@ void WasapiAudioPlayer::Play(const uint8_t* buf, size_t len) {
             mStarted = true;
             ThrowIfFailed(mClient->Start());
         }
-    } catch (HRESULT res) {}
+    } catch (const HResultException& e) { SPDLOG_ERROR("WasapiAudioPlayer::DoPlay failed: {}", e.what()); }
 }
 
 HRESULT STDMETHODCALLTYPE WasapiAudioPlayer::OnDeviceStateChanged(LPCWSTR pwstrDeviceId, DWORD dwNewState) {
@@ -143,8 +177,8 @@ HRESULT STDMETHODCALLTYPE WasapiAudioPlayer::OnDeviceRemoved(LPCWSTR pwstrDevice
 HRESULT STDMETHODCALLTYPE WasapiAudioPlayer::OnDefaultDeviceChanged(EDataFlow flow, ERole role,
                                                                     LPCWSTR pwstrDefaultDeviceId) {
     if (flow == eRender && role == eConsole) {
-        // This callback runs on a separate thread,
-        // but it's not important how fast this write takes effect.
+        // This callback runs on a separate thread, so we need to protect mInitialized
+        std::lock_guard<std::mutex> lock(mMutex);
         mInitialized = false;
     }
     return S_OK;
@@ -159,11 +193,8 @@ ULONG STDMETHODCALLTYPE WasapiAudioPlayer::AddRef() {
 }
 
 ULONG STDMETHODCALLTYPE WasapiAudioPlayer::Release() {
-    ULONG rc = InterlockedDecrement(&mRefCount);
-    if (rc == 0) {
-        delete this;
-    }
-    return rc;
+    // No delete on zero: Audio owns this through a shared_ptr.
+    return InterlockedDecrement(&mRefCount);
 }
 
 HRESULT STDMETHODCALLTYPE WasapiAudioPlayer::QueryInterface(REFIID riid, VOID** ppvInterface) {
