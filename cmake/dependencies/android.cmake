@@ -48,7 +48,7 @@ if (NOT ${spdlog_FOUND})
     FetchContent_MakeAvailable(spdlog)
 
     if(ANDROID)
-        target_compile_definitions(spdlog INTERFACE SPDLOG_FMT_EXTERNAL)
+        set(SPDLOG_FMT_EXTERNAL OFF)  # Android: Use bundled fmt, not external
     endif()
 endif()
 
