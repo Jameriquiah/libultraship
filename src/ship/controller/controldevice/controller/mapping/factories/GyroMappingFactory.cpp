@@ -56,12 +56,7 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
 
 #ifdef __ANDROID__
     const bool androidDeviceHasGyro = AndroidDeviceHasGyroSensor();
-#endif
 
-    for (auto [instanceId, gamepad] :
-         Context::GetInstance()->GetControlDeck()->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(
-             portIndex)) {
-#ifdef __ANDROID__
         if (!SDL_GameControllerHasSensor(gamepad, SDL_SENSOR_GYRO) && !androidDeviceHasGyro) {
             continue;
         }
