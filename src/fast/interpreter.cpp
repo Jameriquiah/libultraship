@@ -4870,6 +4870,35 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
     }
 }
 
+static uintptr_t NormalizePointerForValidation(uintptr_t address) {
+#if defined(__ANDROID__) && defined(__aarch64__)
+    // Android ARM64 may use a tagged-address ABI where the top byte carries a
+    // memory tag. The pointer remains valid to dereference, but range checks
+    // should ignore that tag.
+    return address & 0x00FFFFFFFFFFFFFFull;
+#else
+    return address;
+#endif
+}
+
+static bool IsPlausibleHostStringPointer(uintptr_t address) {
+    uintptr_t normalized = NormalizePointerForValidation(address);
+
+    if (normalized < 0x10000) {
+        return false;
+    }
+
+#if UINTPTR_MAX > 0xFFFFFFFFu
+    // Filter kernel/sentinel addresses while still allowing normal 48-bit
+    // userspace layouts on desktop and mobile 64-bit platforms.
+    if (normalized > 0x0000FFFFFFFFFFFFull) {
+        return false;
+    }
+#endif
+
+    return true;
+}
+
 static void gfx_step() {
     auto& cmd = g_exec_stack.currCmd();
     auto cmd0 = cmd;
@@ -4902,12 +4931,7 @@ static void gfx_step() {
         if (opcode == OTR_G_VTX_OTR_FILEPATH || opcode == OTR_G_SETTIMG_OTR_FILEPATH ||
             opcode == OTR_G_DL_OTR_FILEPATH || opcode == OTR_G_PUSHCD || opcode == OTR_G_MTX_OTR_FILEPATH) {
             uintptr_t w1 = (uintptr_t)cmd->words.w1;
-            if (w1 < 0x10000
-#if UINTPTR_MAX > 0xFFFFFFFFu
-                // On 64-bit: filter kernel/sentinel addresses.
-                || w1 > 0x0000FFFFFFFFFFFFull
-#endif
-            ) {
+            if (!IsPlausibleHostStringPointer(w1)) {
                 ++g_exec_stack.currCmd();
                 return;
             }
@@ -5342,16 +5366,9 @@ int32_t gfx_check_image_signature(const char* imgData) {
 
     // Filter addresses that are obviously not valid string pointers before
     // attempting to dereference for the "__OTR__" check.
-    if (i == 0 || i < 0x10000) {
+    if (!IsPlausibleHostStringPointer(i)) {
         return 0;
     }
-#if UINTPTR_MAX > 0xFFFFFFFFu
-    // On 64-bit: filter kernel/sentinel addresses. Upper bound covers all
-    // user-space layouts (x86_64 47-bit canonical, ARM64 48-bit VA, etc.).
-    if (i > 0x0000FFFFFFFFFFFFull) {
-        return 0;
-    }
-#endif
 
     return Ship::Context::GetRawInstance()->GetResourceManager()->OtrSignatureCheck(imgData);
 }
